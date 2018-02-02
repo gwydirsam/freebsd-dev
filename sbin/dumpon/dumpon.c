@@ -85,8 +85,9 @@ static void
 usage(void)
 {
 	fprintf(stderr, "%s\n%s\n%s\n",
-    "usage: dumpon [-v] [-k public_key_file] [-z] special_file",
-    "usage: dumpon [-v] [-g <gateway>|default] -s <host> -c <client> <iface>\n"
+    "usage: dumpon [-v] [-k <pubkey>] [-z] <device>\n",
+    "usage: dumpon [-v] [-k <pubkey>] [-z]\n"
+    "              [-g <gateway>|default] -s <server> -c <client> <iface>\n"
     "       dumpon [-v] off",
     "       dumpon [-v] -l");
 	exit(EX_USAGE);

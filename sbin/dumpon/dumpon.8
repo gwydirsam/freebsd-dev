@@ -37,9 +37,17 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl v
-.Op Fl k Ar public_key_file
+.Op Fl k Ar pubkey
 .Op Fl z
-.Ar special_file
+.Ar device
+.Nm
+.Op Fl v
+.Op Fl k Ar pubkey
+.Op Fl z
+.Op Fl g Ar gateway | Li default
+.Fl s Ar server
+.Fl c Ar client
+.Ar iface
 .Nm
 .Op Fl v
 .Cm off
@@ -59,7 +67,7 @@ normally occur from the system multi-user initialization file
 controlled by the
 .Dq dumpdev
 and
-.Dq dumppubkey
+.Dq dumpon_flags
 variables in the boot time configuration file
 .Pa /etc/rc.conf .
 .Pp
@@ -71,8 +79,7 @@ Alternatively, full memory dumps can be enabled by setting the
 variable to 0.
 .Pp
 For systems using full memory dumps, the size of the specified dump
-device must be at
-least the size of physical memory.
+device must be at least the size of physical memory.
 Even though an additional 64 kB header is added to the dump, the BIOS for a
 platform typically holds back some memory, so it is not usually
 necessary to size the dump device larger than the actual amount of RAM
@@ -85,8 +92,35 @@ total amount of physical memory as reported by the
 .Xr sysctl 8
 variable.
 .Pp
+.Nm
+can be used to configure a local storage device as the dump device.
+With additional parameters, the kernel can instead be configured to
+transmit a dump to a remove server using
+.Xr netdump 4 .
+This eliminates the need to reserve space for saving crash dumps and
+is especially useful in diskless environments.
 The
-.Op Fl k Ar public_key_file
+.Xr netdump 4
+server address is specified with
+.Fl s Ar server ,
+and the local address is specified with
+.Fl c Ar client .
+The
+.Fl g Ar gateway
+parameter may be used to specify a first-hop router to the server,
+or to specify that the currently configured default gateway is to
+be used.
+Note that the
+.Xr netdump 4
+configuration is not automatically updated if the default route
+changes after the
+.Nm
+invocation.
+The name of the interface to be used must be specified as
+.Ar iface .
+.Pp
+The
+.Fl k Ar pubkey
 flag causes
 .Nm
 to generate a one-time key for kernel crash dump encryption.
@@ -94,16 +128,16 @@ The key will be replaced by a new one when the
 .Nm
 utility is run again.
 The key is encrypted using
-.Ar public_key_file .
+.Ar pubkey .
 This process is sandboxed using
 .Xr capsicum 4 .
 Both plain and encrypted keys are sent to the kernel using
 .Dv DIOCSKERNELDUMP
 .Xr ioctl 2 .
 A user can specify the
-.Ar public_key_file
+.Ar pubkey
 in the
-.Dq dumppubkey
+.Dq dumpon_flags
 variable defined in
 .Pa /etc/rc.conf
 for use with the
@@ -157,13 +191,13 @@ should be used as the dump device.
 The
 .Nm
 utility operates by opening
-.Ar special_file
+.Ar device
 and making a
 .Dv DIOCSKERNELDUMP
 .Xr ioctl 2
 request on it to save kernel crash dumps.
 If
-.Ar special_file
+.Ar device
 is the text string:
 .Dq Li off ,
 .Nm
@@ -274,10 +308,10 @@ does not print any errors.
 .Xr fstab 5 ,
 .Xr rc.conf 5 ,
 .Xr config 8 ,
+.Xr decryptcore 8 ,
 .Xr init 8 ,
 .Xr loader 8 ,
 .Xr rc 8 ,
-.Xr decryptcore 8 ,
 .Xr savecore 8 ,
 .Xr swapon 8 ,
 .Xr panic 9
