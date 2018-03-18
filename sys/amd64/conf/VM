@@ -6,13 +6,14 @@ ident		VM
 makeoptions	DEBUG=-g		# Build kernel with gdb(1) debug symbols
 makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
 
-makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
-				    netgraph/iface netgraph/socket             \
-				  opensolaris dtrace ksyms                     \
-				  crypto geom/geom_eli                         \
-				  procfs nullfs fuse unionfs fdescfs tmpfs     \
-				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
-				  snp hwpmc"
+#makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
+#				    netgraph/iface netgraph/socket             \
+#				  opensolaris dtrace ksyms                     \
+#				  crypto geom/geom_eli                         \
+#				  procfs nullfs fuse unionfs fdescfs tmpfs     \
+#				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
+#				  snp hwpmc zfs\"
+makeoptions     MODULES_OVERRIDE="hwpmc tmpfs ipmi dtrace zfs opensolaris sem linux linuxkpi linux64 linux_common linsysfs coretemp tmpfs vmm linprocfs if_bridge bridgestp if_tap usb sound nmdm cxgbe ixl iwm iwmfw nullfs dummynet ksyms"
 
 options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
@@ -66,6 +67,7 @@ options 	INCLUDE_CONFIG_FILE     # Include this file in kernel
 options 	GZIO
 options 	GEOM_MIRROR
 options 	NETDUMP
+options 	NETDUMP_DEBUG
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.

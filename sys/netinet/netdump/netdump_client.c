@@ -120,12 +120,14 @@ static int	 netdump_udp_output(struct mbuf *m);
 /* Must be at least as big as the chunks dumpsys() gives us. */
 static unsigned char nd_buf[MAXDUMPPGS * PAGE_SIZE];
 static uint32_t nd_seqno;
+static uint32_t nd_windw; /* Current window size. */
 static int dump_failed, have_gw_mac;
 static void (*drv_if_input)(struct ifnet *, struct mbuf *);
 static int restore_gw_addr;
 
 static uint64_t rcvd_acks;
 CTASSERT(sizeof(rcvd_acks) * NBBY == NETDUMP_MAX_IN_FLIGHT);
+
 
 /*
  * Times to poll the NIC (0.5ms each poll) before assuming packetloss
@@ -386,6 +388,35 @@ netdump_mbuf_free(struct mbuf *m __unused)
  * an acknowledgement before returning.  Splits packets into chunks small
  * enough to be sent without fragmentation (looks up the interface MTU)
  *
+ * Sam:
+ * Current Algorithm
+ * for i = sent_so_far = 0; sent_so_far < length of buffer or nothing is sent; i++
+ *   set pktlen to (length of buffer) - sent_so_far
+ *   bound pktlen by max pkt size (NETDUMP_DATASIZE=4k) whichever is smaller
+ *   bound pktlen by pktlen or mtu - udp header - nd header whichever is smaller
+ *
+ *   if packet has been acked already, add len to pktlen and skip rest of loop
+ *
+ *   fill out header
+ *   get mbuf from casper
+ * 
+ *   netdump_udp_output (transmit)
+ *
+ *   set want_acks that this packet has been transmitted
+ *   sent_so_far += pktlen
+ *   
+ * while rcvd_acks != want_acks
+ *   if (polls++ > maximum number of polls = 10)
+ *     if (retries++ > maximum number of retries = 10)
+ *       return ETIMEDOUT
+ *     print "."
+ *     restart transmit loop
+ *   poll_nic for packets
+ *   wait 500ms
+ * increment nd_seqno by number of pkts sent
+ *
+ *
+ *
  * Parameters:
  *	type	netdump packet type (HERALD, FINISHED, or VMCORE)
  *	offset	vmcore data offset (bytes)
@@ -403,25 +434,35 @@ netdump_send(uint32_t type, off_t offset, unsigned char *data, uint32_t datalen)
 	uint64_t want_acks;
 	uint32_t i, pktlen, sent_so_far;
 	int retries, polls, error;
-
+	uint32_t lhs, rhs; /* left and right hand side of window */
+	
 	want_acks = 0;
 	rcvd_acks = 0;
 	retries = 0;
+	lhs = 0;
+	rhs = min(lhs + nd_windw, datalen);
 
 	MPASS(nd_ifp != NULL);
 
+	for(lhs = 0; lhs < datalen;) {
+		NETDDEBUG("netdump_send(): datalen=%u, lhs=%u, rhs=%u, nd_windw=%u\n",datalen, lhs, rhs, nd_windw);
+
 retransmit:
 	/* Chunks can be too big to fit in packets. */
-	for (i = sent_so_far = 0; sent_so_far < datalen ||
+	for (i = sent_so_far = lhs; sent_so_far < rhs ||
 	    (i == 0 && datalen == 0); i++) {
+		NETDDEBUG("netdump_send(): sent_so_far=%u, lhs=%u, rhs=%u, nd_windw=%u\n", sent_so_far, lhs, rhs, nd_windw);
 		pktlen = datalen - sent_so_far;
 
-		/* First bound: the packet structure. */
-		pktlen = min(pktlen, NETDUMP_DATASIZE);
+		///* First bound: the packet structure. */
+		//pktlen = min(pktlen, NETDUMP_DATASIZE);
+		/* First bound: the congestion window size. */
+		pktlen = min(pktlen, nd_windw);
 
 		/* Second bound: the interface MTU (assume no IP options). */
 		pktlen = min(pktlen, nd_ifp->if_mtu - sizeof(struct udpiphdr) -
 		    sizeof(struct netdump_msg_hdr));
+		NETDDEBUG("netdump_send(): pktlen=%u\n", pktlen);
 
 		/*
 		 * Check if it is retransmitting and this has been ACKed
@@ -446,6 +487,7 @@ retransmit:
 		MH_ALIGN(m, sizeof(struct netdump_msg_hdr));
 		nd_msg_hdr = mtod(m, struct netdump_msg_hdr *);
 		nd_msg_hdr->mh_seqno = htonl(nd_seqno + i);
+		NETDDEBUG("netdump_send(): nd_seqno=%u\n", nd_seqno);
 		nd_msg_hdr->mh_type = htonl(type);
 		nd_msg_hdr->mh_offset = htobe64(offset + sent_so_far);
 		nd_msg_hdr->mh_len = htonl(pktlen);
@@ -488,12 +530,18 @@ retransmit:
 			if (retries++ > nd_retries)
 				return (ETIMEDOUT);
 			printf(". ");
+			printf("retransmit!\n");
 			goto retransmit;
 		}
 		netdump_network_poll();
 		DELAY(500);
 	}
 	nd_seqno += i;
+
+	/* Move lhs, rhs forward by the size of the window */
+	lhs += rhs - lhs; 
+	rhs = min(rhs + nd_windw, datalen);
+	}
 	return (0);
 }
 
@@ -517,6 +565,7 @@ netdump_handle_ip(struct mbuf **mb)
 	struct netdump_ack *nd_ack;
 	struct mbuf *m;
 	int rcv_ackno;
+	int rcv_windw;
 	unsigned short hlen;
 
 	/* IP processing. */
@@ -659,12 +708,15 @@ netdump_handle_ip(struct mbuf **mb)
 	/* Netdump processing. */
 
 	/*
-	 * Packet is meant for us.  Extract the ack sequence number and the
-	 * port number if necessary.
+	 * Packet is meant for us.  Extract the ack sequence number, window
+	 * size and the port number if necessary.
 	 */
 	nd_ack = (struct netdump_ack *)(mtod(m, caddr_t) +
 	    sizeof(struct udpiphdr));
 	rcv_ackno = ntohl(nd_ack->na_seqno);
+	nd_windw = rcv_windw = ntohl(nd_ack->na_windw);
+	NETDDEBUG("%s: ACK %d WINDW %d\n", __func__, rcv_ackno, rcv_windw);
+
 	if (nd_server_port == NETDUMP_PORT)
 		nd_server_port = ntohs(udp->ui_u.uh_sport);
 	if (rcv_ackno >= nd_seqno + NETDUMP_MAX_IN_FLIGHT)
@@ -953,6 +1005,8 @@ netdump_start(struct dumperinfo *di)
 	di->dumpoff = 0;
 
 	nd_seqno = 1;
+	nd_windw = 5 * 1448;
+	
 
 	/*
 	 * nd_server_port could have switched after the first ack the
